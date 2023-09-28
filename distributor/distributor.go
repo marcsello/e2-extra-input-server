@@ -67,16 +67,22 @@ func assignNextAvailable(subscribers []subscriber, data *DataWithID) (int, *subs
 func (d *Distributor) run() {
 	// We just put all magic to a single goroutine, so we don't have to deal with weird locking mechanisms...
 	var subscribers []subscriber
-	var dataID uint64
+	var dataID uint64 // we have to assign dataID here, otherwise it would be possible that they arrive swapped so they won't be incremental, which would mess everything up
 
 	d.logger.Debug("Distributor main loop start...")
 	for {
 		lgr := d.logger.With(zap.Int("len_subscribers", len(subscribers)))
 		select {
 		case newData := <-d.dataInputChan:
+			lastData := d.lastData.Load()
+			if lastData != nil && lastData.Data == newData {
+				lgr.Debug("Received new data, but it is the same as last data... skipping")
+				continue
+			}
+
 			dataID++
 			newDataWithId := DataWithID{Data: newData, ID: dataID}
-			d.lastData.Store(&newDataWithId)
+			d.lastData.Store(&newDataWithId) // only written by this thread, so we are fine from the write-after-free bugs
 			placeInQueue, assignee := assignNextAvailable(subscribers, &newDataWithId)
 			if placeInQueue != -1 && assignee != nil {
 				lgr.Info("Assigned new data to a subscriber",
@@ -171,7 +177,7 @@ func (d *Distributor) Subscribe(lastID uint64) (<-chan DataWithID, func(bool)) {
 		panic("distributor is being closed") // should be avoided...
 	}
 
-	id := d.lastSubscriberID.Add(1)
+	id := d.lastSubscriberID.Add(1) // This does not need to be incremental, just unique
 	d.logger.Debug("Notification of new subscriber request", zap.Uint64("subscriberID", id), zap.Uint64("lastID", lastID))
 
 	dataChan := make(chan DataWithID, 1)
