@@ -32,8 +32,17 @@ func main() {
 	r.Methods("GET").Path("/sub").HandlerFunc(wrapHandler(handleSubscription)) // middlewares are just pain to use...
 	r.Methods("PUT").Path("/pub").HandlerFunc(wrapHandler(handlePublish))
 
-	globalLogger.Info("Starting webserver")
-	err = http.ListenAndServe(":8080", r)
+	certFile := env.String("TLS_CERT", "")
+	keyFile := env.String("TLS_KEY", "")
+	useTLS := certFile != "" && keyFile != ""
+	bindAddr := env.String("BIND_ADDRESS", ":8080")
+
+	globalLogger.Info("Starting webserver", zap.Bool("useTLS", useTLS), zap.String("bindAddr", bindAddr))
+	if useTLS {
+		err = http.ListenAndServeTLS(bindAddr, certFile, keyFile, r)
+	} else {
+		err = http.ListenAndServe(bindAddr, r)
+	}
 	if err != nil {
 		panic(err)
 	}
